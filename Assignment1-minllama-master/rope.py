@@ -50,14 +50,36 @@ def apply_rotary_emb(
 
     _, seqlen, _, _ = query.shape
     device = query.device
-    # todo
-    #
-    # Please refer to slide 22 in https://phontron.com/class/anlp2024/assets/slides/anlp-05-transformers.pdf
-    # and Section 3 in https://arxiv.org/abs/2104.09864.
+    
+    # Shape: (head_dim/2,)
+    freqs = 1.0 / (theta ** (torch.arange(0, head_dim, 2).float() / head_dim))
+
+    # Shape: (seqlen,)
+    t = torch.arange(seqlen, device=device)
+
+    # Outer product → shape: (seqlen, head_dim/2)
+    freqs = torch.outer(t, freqs)
+
+    cos = freqs.cos()  # (seqlen, head_dim/2)
+    sin = freqs.sin()
 
     # reshape xq and xk to match the complex representation
     query_real, query_imag = query.float().reshape(query.shape[:-1] + (-1, 2)).unbind(-1)
     key_real, key_imag = key.float().reshape(key.shape[:-1] + (-1, 2)).unbind(-1)
+
+    cos = reshape_for_broadcast(cos, query_real)
+    sin = reshape_for_broadcast(sin, query_real)
+
+    query_out = torch.cat([
+        query_real * cos - query_imag * sin,
+        query_real * sin + query_imag * cos
+    ], dim=-1).to(query.dtype)
+
+    key_out = torch.cat([
+        key_real * cos - key_imag * sin,
+        key_real * sin + key_imag * cos
+    ], dim=-1).to(key.dtype)
+
     # This separates each query/key vector into its odd and even indices (assuming *one-indexing*).
     # query_real contains q_1, q_3, q_5, ... and query_imag contains q_2, q_4, q_6, ...
 
@@ -66,10 +88,6 @@ def apply_rotary_emb(
 
     # Then, combine these trigonometric values with the tensors query_real, query_imag,
     # key_real, and key_imag.
-
-    raise NotImplementedError
-
-    query_out = None
-    key_out = None
+    
     # Return the rotary position embeddings for the query and key tensors
     return query_out, key_out
